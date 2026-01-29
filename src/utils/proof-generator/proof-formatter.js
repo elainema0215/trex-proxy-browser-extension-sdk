@@ -1,3 +1,5 @@
+import { ATTESTOR_WS_URL } from "../constants";
+
 export const formatProof = (proof, requestData) => {
   let formattedProof = {
     identifier: proof.claim.identifier,
@@ -6,7 +8,7 @@ export const formatProof = (proof, requestData) => {
     witnesses: [
       {
         id: proof.signatures.attestorAddress,
-        url: "wss://attestor.reclaimprotocol.org/ws",
+        url: ATTESTOR_WS_URL,
       },
     ],
     taskId: null,

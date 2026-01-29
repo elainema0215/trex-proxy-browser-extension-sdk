@@ -4,7 +4,7 @@ import {
   extractParamsFromResponse,
   separateParams,
 } from "./params-extractor";
-import { MESSAGE_ACTIONS, MESSAGE_SOURCES } from "../constants";
+import { MESSAGE_ACTIONS, MESSAGE_SOURCES, ATTESTOR_WS_URL } from "../constants";
 import { ensureOffscreenDocument } from "../offscreen-manager";
 import { getUserLocationBasedOnIp } from "./get-dynamic-geo";
 import { EVENT_TYPES, LOG_LEVEL, LOG_TYPES } from "../logger/constants";
@@ -383,7 +383,7 @@ export const createClaimObject = async (
     secretParams,
     ownerPrivateKey: ownerPrivateKey,
     client: {
-      url: "wss://attestor.reclaimprotocol.org/ws",
+      url: ATTESTOR_WS_URL,
     },
   };
 

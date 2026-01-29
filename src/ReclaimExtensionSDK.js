@@ -33,8 +33,13 @@ async function _drainQueue() {
   }
 }
 
+/**
+ * 单次验证请求实例：负责会话配置、事件监听、与 Content/Background 的通信桥接。
+ * 运行环境分为 extension（扩展 popup/options 页）与 web（第三方网页），通信方式不同。
+ */
 class ReclaimExtensionProofRequest {
   constructor(applicationId, providerId, options = {}) {
+    // ---------- 会话与配置字段 ----------
     this.applicationId = applicationId;
     this.providerId = providerId;
     this.sessionId = "";
@@ -54,6 +59,7 @@ class ReclaimExtensionProofRequest {
     this._backgroundInitialized = false;
     this._ctx = null;
 
+    // ---------- 事件：started / completed / error / progress ----------
     this._listeners = {
       started: new Set(),
       completed: new Set(),
@@ -63,11 +69,12 @@ class ReclaimExtensionProofRequest {
     this._boundWindowListener = this._handleWindowMessage.bind(this);
     window.addEventListener("message", this._boundWindowListener);
 
+    // ---------- 运行模式：根据当前页面协议判断是扩展内页还是第三方网页 ----------
     this._mode =
       typeof chrome !== "undefined" && chrome.runtime && location?.protocol === "chrome-extension:"
         ? "extension"
         : "web";
-    // No global runtime listener here. Each ReclaimExtensionProofRequest instance already listens and emits.
+    // extension 模式：直接监听 chrome.runtime.onMessage，接收 Background 广播的 PROOF_SUBMITTED / 失败
     if (this._mode === "extension") {
       this._boundChromeHandler = (message) => {
         const { action, data, error } = message || {};
@@ -86,6 +93,10 @@ class ReclaimExtensionProofRequest {
     }
   }
 
+  /**
+   * 创建并初始化一次验证请求：校验参数 → 构造实例 → 签名 → 后端创建会话。
+   * 调用方需先 init 再 startVerification；fromConfig 用于服务端下发的配置反序列化。
+   */
   static async init(applicationId, appSecret, providerId, options = {}) {
     if (!applicationId || typeof applicationId !== "string") {
       throw new Error("applicationId must be a non-empty string");
@@ -99,14 +110,14 @@ class ReclaimExtensionProofRequest {
 
     const instance = new ReclaimExtensionProofRequest(applicationId, providerId, options);
 
-    // Generate signature over canonicalized { providerId, timestamp }
+    // 对规范化的 { providerId, timestamp } 做 keccak256 后用 appSecret 对应私钥签名，供后端校验
     const canonical = `{"providerId":"${providerId}","timestamp":"${instance.timestamp}"}`;
     const hash = keccak256(new TextEncoder().encode(canonical));
     const wallet = new Wallet(appSecret);
     const signature = await wallet.signMessage(getBytes(hash));
     instance.signature = signature;
 
-    // Init session on backend
+    // 调用后端 /api/sdk/init/session/ 创建会话，拿到 sessionId 与 resolvedProviderVersion
     const initRes = await instance._initSession({
       providerId,
       appId: applicationId,
@@ -119,11 +130,13 @@ class ReclaimExtensionProofRequest {
     return instance;
   }
 
+  /** 从 JSON 字符串或对象反序列化为实例，常用于服务端下发配置、网页端不暴露 appSecret 的场景 */
   static fromJsonString(json, options = {}) {
     const cfg = typeof json === "string" ? JSON.parse(json) : json;
     return this.fromConfig(cfg, options);
   }
 
+  /** 从配置对象还原实例：sessionId、signature、callbackUrl 等均从 config 填充，sdkVersion 保持 ext-* 不信任入参 */
   static fromConfig(config, options = {}) {
     if (!config || typeof config !== "object") throw new Error("invalid config");
     const instance = new ReclaimExtensionProofRequest(
@@ -150,12 +163,11 @@ class ReclaimExtensionProofRequest {
 
     if (options?.extensionID) instance.extensionID = String(options.extensionID);
 
-    // Keep sdkVersion as ext-* (do not trust inbound js sdkVersion)
-    // instance.sdkVersion already set to ext-<version>
+    // sdkVersion 保持构造函数中的 ext-<version>，不采用 config 中的值，防止伪造
     return instance;
   }
 
-  // Configuration helpers
+  // ---------- 配置辅助：callback / redirect / context / parameters / statusUrl ----------
   setAppCallbackUrl(url, jsonProofResponse = false) {
     if (!url || typeof url !== "string") throw new Error("callbackUrl must be a non-empty string");
     this.callbackUrl = url;
@@ -177,13 +189,14 @@ class ReclaimExtensionProofRequest {
     this.parameters = { ...this.parameters, ...params };
   }
 
+  /** 返回当前会话的状态查询 URL（后端 /api/sdk/session/:sessionId） */
   getStatusUrl() {
     if (!this.sessionId) throw new Error("Session not initialized");
 
     return API_ENDPOINTS.STATUS_URL(this.sessionId);
   }
 
-  // Events
+  // ---------- 事件订阅：on 返回取消订阅函数 ----------
   on(event, cb) {
     if (!this._listeners[event]) throw new Error(`Unknown event: ${event}`);
     this._listeners[event].add(cb);
@@ -194,14 +207,20 @@ class ReclaimExtensionProofRequest {
     this._listeners[event].delete(cb);
   }
 
-  // Public API: start verification
+  /**
+   * 对外 API：开始验证。先进入全局队列串行执行（Background 单会话），再执行 _startVerificationInternal。
+   * 返回的 Promise 在收到 completed 时 resolve(proofs)，收到 error 时 reject。
+   */
   async startVerification() {
     return _enqueueVerification(() => this._startVerificationInternal());
   }
 
+  /**
+   * 取消当前验证：通过 postMessage 通知 Content（再转 Background 执行 cancelSession），
+   * 等待 error 事件（Content 收到 PROOF_GENERATION_FAILED 后 postMessage VERIFICATION_FAILED）或超时。
+   */
   async cancel(timeoutMs = 5000) {
     if (!this.sessionId) return;
-    // Wait for VERIFICATION_FAILED propagated from content on cancel
     return new Promise((resolve) => {
       let done = false;
       const offErr = this.on("error", () => {
@@ -211,7 +230,7 @@ class ReclaimExtensionProofRequest {
           resolve(true);
         }
       });
-      // Post cancel
+      // 向页面广播取消，由注入的 Content Script 转发给 Background
       window.postMessage(
         {
           action: RECLAIM_SDK_ACTIONS.CANCEL_VERIFICATION,
@@ -220,7 +239,6 @@ class ReclaimExtensionProofRequest {
         },
         "*",
       );
-      // Fallback timeout
       setTimeout(() => {
         if (!done) {
           offErr();
@@ -230,7 +248,11 @@ class ReclaimExtensionProofRequest {
     });
   }
 
-  // Internals
+  /**
+   * 内部：组装 templateData，根据 _mode 选择通信方式，返回一个由 completed/error 事件驱动的 Promise。
+   * - extension：chrome.runtime.sendMessage 发给 Background，started 由回调里 _emit。
+   * - web：window.postMessage 发给页面内 Content Script（需 extensionID），started/completed/error 由 _handleWindowMessage 收到 Content 转发后 _emit。
+   */
   async _startVerificationInternal() {
     if (!this.sessionId) throw new Error("Session not initialized");
     if (!this.signature) throw new Error("Signature not set");
@@ -254,7 +276,7 @@ class ReclaimExtensionProofRequest {
 
     const messageId = this.sessionId;
 
-    // One-shot Promise around events
+    // 一次性 Promise：completed 时 resolve(payload)，error 时 reject(err)，并移除本次注册的监听
     return new Promise((resolve, reject) => {
       const offStarted = this.on("started", () => {});
       const offCompleted = this.on("completed", (payload) => {
@@ -271,7 +293,6 @@ class ReclaimExtensionProofRequest {
         offError && offError();
       };
 
-      // choose path based on SDK mode, not on chrome.runtime presence
       if (this._mode === "extension") {
         try {
           chrome.runtime.sendMessage(
@@ -290,7 +311,7 @@ class ReclaimExtensionProofRequest {
           this._emit("error", e instanceof Error ? e : new Error(String(e)));
         }
       } else {
-        // web page → talk to the injected content script via window.postMessage
+        // 网页环境：必须传 extensionID，由页面内 Content Script 根据 extensionID 校验后转发给 Background
         if (!this.extensionID) {
           this._emit("error", new Error("extensionID is required when running on a web page"));
           return;
@@ -308,6 +329,7 @@ class ReclaimExtensionProofRequest {
     });
   }
 
+  /** 移除 window 与 chrome.runtime 的监听，并清空所有事件回调，避免泄漏 */
   dispose() {
     window.removeEventListener("message", this._boundWindowListener);
     if (this._boundChromeHandler && chrome?.runtime?.onMessage?.removeListener) {
@@ -321,6 +343,7 @@ class ReclaimExtensionProofRequest {
     this._listeners.progress.clear();
   }
 
+  /** 调用后端 /api/sdk/init/session/ 创建会话，返回 { sessionId, resolvedProviderVersion } 等 */
   async _initSession(payload) {
     const res = await fetch(`${BACKEND_URL}/api/sdk/init/session/`, {
       method: "POST",
@@ -332,6 +355,7 @@ class ReclaimExtensionProofRequest {
     return data;
   }
 
+  /** 向当前实例已订阅的 event 回调派发 payload */
   _emit(event, payload) {
     if (!this._listeners[event]) return;
     for (const cb of this._listeners[event]) {
@@ -341,6 +365,10 @@ class ReclaimExtensionProofRequest {
     }
   }
 
+  /**
+   * 处理来自同源 window 的 postMessage：Content Script 会把 VERIFICATION_STARTED / COMPLETED / FAILED 转发到页面，
+   * 这里根据 messageId 过滤是否为本会话，再 _emit 对应事件（web 模式下 started/completed/error 均由此驱动）。
+   */
   _handleWindowMessage(event) {
     if (event.source !== window) return;
     const { action, messageId, data, error } = event.data || {};

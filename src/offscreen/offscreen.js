@@ -236,7 +236,7 @@ class OffscreenProofGenerator {
           reject(new Error("Proof generation timed out after 2 minutes"));
         }, 60000 * 2);
       });
-
+      // 通过 createClaimOnAttestor(claimData) 连到 attestor 的 WebSocket 服务（/ws），完成「建 tunnel → TLS → claim tunnel → 拿到签名 proof」这一套协议。
       const attestorPromise = await createClaimOnAttestor(claimData);
 
       offscreenLogger.info({
