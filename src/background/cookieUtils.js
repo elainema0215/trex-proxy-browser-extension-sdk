@@ -1,3 +1,20 @@
+/**
+ * @fileoverview Cookie Utilities - Cookie 获取与组装工具
+ * @description 提供用于获取、过滤和组装指定 URL 的 Cookie 字符串的工具函数，支持标准 Cookie 和分区 Cookie (CHIPS)。
+ *
+ * 主要功能/逻辑/流程：
+ * 1. 获取 Cookie (getCookiesForUrl):
+ *    - 核心流程：接收目标 URL，从 Chrome Cookies API 中检索所有相关 Cookie。
+ *    - 广度搜索：为了确保不遗漏（特别是被分区或具体子域的 Cookie），它通过多种组合（域名、URL、分区键 PartitionKey）并行查询 Cookie Store。
+ *    - 分区支持：特别处理了 Google 的 CHIPS (Cookies Having Independent Partitioned State) 机制，尝试推断 eTLD+1 作为 topLevelSite 进行查询。
+ *
+ * 2. 过滤与去重:
+ *    - 过滤规则 (shouldIncludeCookie)：检查域名匹配 (RFC6265)、路径匹配、Secure 属性与 HTTPS 的对应关系、以及过期时间。
+ *    - 智能去重：当存在多个同名 Cookie 时，优先保留更具体的版本（HostOnly > 路径更长 > 过期时间更晚）。
+ *
+ * 3. 组装输出:
+ *    - 按照标准（路径越长越优先）排序，最终拼接成 HTTP 请求头所需的 `Cookie: name=value; ...` 字符串格式。
+ */
 import { LOG_LEVEL, LOG_TYPES } from "../utils/logger";
 
 export async function getCookiesForUrl(url, bgLogger) {

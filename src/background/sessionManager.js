@@ -1,5 +1,23 @@
-// Session management for background script
-// Handles session start, fail, submit, and timer logic
+/**
+ * @file sessionManager.js
+ * @description 后台脚本的会话管理模块，负责验证会话的启动、失败、提交与取消，以及计时器与并发控制。
+ *
+ * ## 主要功能
+ * - **startVerification**: 启动验证流程——拉取 provider 数据、创建 provider 登录页新标签页、初始化会话状态与弹窗/Provider 数据消息。
+ * - **failSession**: 将会话标记为失败——清计时器、设 aborted、更新状态为 PROOF_GENERATION_FAILED，并通知 content/original tab 与 runtime。
+ * - **submitProofs**: 提交已生成的证明——校验证明完整性、按需提交到 callbackUrl 或仅更新状态，通知各端并释放会话。
+ * - **cancelSession**: 用户取消会话——与 fail 类似但带「Cancelled by user」语义，关闭验证页、恢复原标签页并清理会话数据。
+ *
+ * ## 核心逻辑与流程
+ * 1. **启动**: 清空 ctx 成员与计时器 → fetchProviderData → chrome.tabs.create(providerUrl) → 写入 initPopupMessage/providerDataMessage → updateSessionStatus(USER_STARTED_VERIFICATION)。
+ * 2. **失败/取消**: clearAllTimers → ctx.aborted = true → updateSessionStatus(PROOF_GENERATION_FAILED) → 向 activeTabId/originalTabId/runtime 发送 PROOF_GENERATION_FAILED → 清队列并置 activeSessionId = null。
+ * 3. **提交**: 若 expectManyClaims 则直接返回；否则 clearAllTimers → 检查 generatedProofs 与 requestData 完整性 → formatProof → 有 callbackUrl 则 submitProofOnCallback，否则仅 updateSessionStatus(PROOF_GENERATION_SUCCESS) → 向各端发送 PROOF_SUBMITTED → 可选切回原标签页 → activeSessionId = null。
+ *
+ * ## 依赖与约定
+ * - 依赖 ctx 上的 bgLogger、sessionTimerManager、fetchProviderData、updateSessionStatus、submitProofOnCallback、formatProof、MESSAGE_ACTIONS、MESSAGE_SOURCES、RECLAIM_SESSION_STATUS 等。
+ * - 通过 ctx.activeSessionId 做并发守卫；通过 ctx.aborted 控制队列/offscreen 停止处理。
+ * @module background/sessionManager
+ */
 
 import { LOG_TYPES, EVENT_TYPES, LOG_LEVEL } from "../utils/logger";
 
@@ -511,7 +529,8 @@ export async function submitProofs(ctx) {
         setTimeout(async () => {
           await chrome.tabs.update(ctx.originalTabId, { active: true });
           if (ctx.activeTabId) {
-            await chrome.tabs.remove(ctx.activeTabId);
+            // 注释：验证完成后不再关闭目标（验证）页面
+            // await chrome.tabs.remove(ctx.activeTabId);
             ctx.activeTabId = null;
           }
           ctx.originalTabId = null;
@@ -527,7 +546,8 @@ export async function submitProofs(ctx) {
       // Fallback: started from panel/popup, no original tab to return to
       try {
         setTimeout(async () => {
-          await chrome.tabs.remove(ctx.activeTabId);
+          // 注释：验证完成后不再关闭目标（验证）页面
+          // await chrome.tabs.remove(ctx.activeTabId);
           ctx.activeTabId = null;
         }, 3000);
       } catch (e) {

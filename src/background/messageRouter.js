@@ -1,9 +1,29 @@
-// Message router for background script
-// Handles chrome.runtime.onMessage and routes actions to modules
+/**
+ * @file messageRouter.js
+ * @description 后台脚本消息路由器。监听 chrome.runtime.onMessage，按 action 路由到对应逻辑。
+ *
+ * 主要 action 与流程：
+ * - 会话/Tab：CONTENT_SCRIPT_LOADED（下发 SHOULD_INITIALIZE、补发缓存消息）、CHECK_IF_MANAGED_TAB、
+ *   REQUEST_PROVIDER_DATA、CLOSE_CURRENT_TAB、GET_CURRENT_TAB_ID
+ * - 验证：START_VERIFICATION（并发校验 + sessionManager.startVerification）、CANCEL_VERIFICATION、REPORT_PROVIDER_ERROR
+ * - 请求/证明：FILTERED_REQUEST_FOUND（缓存或 processFilteredRequest）、REQUEST_CLAIM
+ * - 状态更新：UPDATE_PUBLIC_DATA、UPDATE_EXPECT_MANY_CLAIMS、GET_PARAMETERS（均需受管 tab）
+ * - 注入：INJECT_VIA_SCRIPTING（REPLAY_PAGE_FETCH / RUN_CUSTOM_INJECTION）
+ * - 其他：OFFSCREEN_DOCUMENT_READY、default（Action not supported）
+ * 约定：通过 sendResponse 回传；return true 支持异步；异常时 sendResponse({ success: false, error })。
+ */
 
 import { LOG_TYPES, LOG_LEVEL, EVENT_TYPES } from "../utils/logger";
 import * as sessionManager from "./sessionManager";
 
+/**
+ * 处理扩展运行时消息，按 action 分发并回传结果。
+ * @param {Object} ctx - 后台上下文（bgLogger、managedTabs、providerData、sessionId 等）
+ * @param {Object} message - 消息体，含 action、source、target、data
+ * @param {chrome.runtime.MessageSender} sender - 发送方（如 tab、extension）
+ * @param {function(Object): void} sendResponse - 回调，用于返回 { success, data?, result?, error? }
+ * @returns {Promise<boolean>} 恒为 true，表示响应将异步通过 sendResponse 返回
+ */
 export async function handleMessage(ctx, message, sender, sendResponse) {
   const { action, source, target, data } = message;
   const bgLogger = ctx.bgLogger;

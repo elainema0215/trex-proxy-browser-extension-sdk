@@ -1,59 +1,59 @@
-# Content Script Module
+# Content Script 模块
 
-The content script module is responsible for running in the context of web pages and handling the core functionality of the Reclaim Browser Extension. It acts as a bridge between web pages, the Reclaim SDK, and the extension's background scripts.
+Content Script 模块负责在网页上下文中运行，并处理 Reclaim 浏览器扩展的核心功能。它充当网页、Reclaim SDK 和扩展后台脚本（Background Scripts）之间的桥梁。
 
-## 📁 Folder Structure
+## 📁 目录结构
 
 ```
 src/content/
-├── content.js              # Main content script entry point
-├── components/             # UI components
-│   └── ProviderVerificationPopup.js  # Verification popup UI
-└── README.md              # This documentation
+├── content.js              # 主 content script 入口点
+├── components/             # UI 组件
+│   └── ProviderVerificationPopup.js  # 验证弹窗 UI
+└── README.md              # 本文档
 ```
 
-## 🔧 Core Functionality
+## 🔧 核心功能
 
-### 1. Network Interception & Filtering
+### 1. 网络拦截与过滤
 
-The content script coordinates with a network interceptor to capture and filter HTTP requests/responses based on provider-specific criteria.
+Content Script 与网络拦截器（Network Interceptor）协同工作，根据特定于提供商（Provider）的标准捕获并过滤 HTTP 请求/响应。
 
-**Key Features:**
+**主要特性：**
 
-- Intercepts network requests and responses via injected interceptor script
-- Filters requests based on provider configuration
-- Links requests with their corresponding responses
-- Manages memory cleanup for intercepted data
-- Automatically stops collection once all required requests are found
+- 通过注入的拦截器脚本拦截网络请求和响应
+- 根据提供商配置过滤请求
+- 将请求与其对应的响应进行关联
+- 管理被拦截数据的内存清理
+- 一旦找到所有必需的请求，自动停止收集
 
-### 2. Provider Verification Popup
+### 2. 提供商验证弹窗
 
-A sophisticated UI component that guides users through the verification process with real-time status updates.
+这是一个复杂的 UI 组件，通过实时状态更新引导用户完成验证过程。
 
-**Features:**
+**特性：**
 
-- Responsive popup positioned at bottom-right of the page
-- Multi-step verification flow with progress indicators
-- Real-time status updates (claim creation, proof generation, submission)
-- Error handling and retry mechanisms
-- Modern glassmorphism design with animations
+- 位于页面右下角的响应式弹窗
+- 带有进度指示的多步验证流程
+- 实时状态更新（凭证创建、证明生成、提交）
+- 错误处理和重试机制
+- 具有动画效果的现代玻璃拟态（Glassmorphism）设计
 
-### 3. SDK Communication Bridge
+### 3. SDK 通信桥梁
 
-Facilitates communication between the Reclaim SDK running on web pages and the extension's background scripts.
+促进运行在网页上的 Reclaim SDK 与扩展后台脚本之间的通信。
 
-**Supported Actions:**
+**支持的操作：**
 
-- Extension detection and health checks
-- Verification process initiation
-- Real-time status updates
-- Proof delivery
+- 扩展检测和健康检查
+- 启动验证流程
+- 实时状态更新
+- 证明（Proof）投递
 
-## 🚀 Integration Guide
+## 🚀 集成指南
 
-### Setting up Content Script in Your Extension
+### 在您的扩展中设置 Content Script
 
-1. **Manifest Configuration** (manifest.json):
+1. **Manifest 配置** (manifest.json):
 
 ```json
 {
@@ -68,103 +68,103 @@ Facilitates communication between the Reclaim SDK running on web pages and the e
 }
 ```
 
-2. **Required Dependencies**:
+2. **必需的依赖项**:
 
-- Network interceptor script (must be web-accessible)
-- Background script for message handling
-- Provider configuration data
-- Logging service
+- 网络拦截器脚本（必须是 web-accessible 的）
+- 用于消息处理的后台脚本
+- 提供商配置数据
+- 日志服务
 
-### Environment Variables
+### 环境变量
 
-Ensure these environment variables are set during build:
+确保在构建期间设置了这些环境变量：
 
 ```bash
 EXTENSION_ID=your-extension-id-here
 ```
 
-This is used for security validation to ensure only your extension can communicate with the SDK.
+这用于安全验证，以确保只有您的扩展可以与 SDK 通信。
 
-### Message Flow Architecture
+### 消息流架构
 
 ```mermaid
 graph TD
-    A[Web Page/SDK] -->|postMessage| B[Content Script]
-    B -->|chrome.runtime.sendMessage| C[Background Script]
+    A[网页/SDK] -->|postMessage| B[Content Script]
+    B -->|chrome.runtime.sendMessage| C[后台脚本]
     C -->|chrome.tabs.sendMessage| B
     B -->|postMessage| A
 
-    B --> D[Network Interceptor]
+    B --> D[网络拦截器]
     D -->|postMessage| B
 
-    B --> E[Verification Popup]
+    B --> E[验证弹窗]
     E --> B
 ```
 
-## 📨 Message Actions Reference
+## 📨 消息操作参考
 
-### SDK Actions (Web Page ↔ Content Script)
+### SDK 操作 (网页 ↔ Content Script)
 
-- `RECLAIM_EXTENSION_CHECK` - Check if extension is installed
-- `RECLAIM_EXTENSION_RESPONSE` - Extension availability response
-- `RECLAIM_START_VERIFICATION` - Start verification process
-- `RECLAIM_VERIFICATION_STARTED` - Verification started confirmation
-- `RECLAIM_VERIFICATION_COMPLETED` - Verification completed with proof
-- `RECLAIM_VERIFICATION_FAILED` - Verification failed with error
+- `RECLAIM_EXTENSION_CHECK` - 检查扩展是否已安装
+- `RECLAIM_EXTENSION_RESPONSE` - 扩展可用性响应
+- `RECLAIM_START_VERIFICATION` - 开始验证流程
+- `RECLAIM_VERIFICATION_STARTED` - 验证已开始确认
+- `RECLAIM_VERIFICATION_COMPLETED` - 验证完成并附带证明
+- `RECLAIM_VERIFICATION_FAILED` - 验证失败并附带错误
 
-### Internal Actions (Content Script ↔ Background Script)
+### 内部操作 (Content Script ↔ 后台脚本)
 
-- `CONTENT_SCRIPT_LOADED` - Notify content script is ready
-- `SHOULD_INITIALIZE` - Check if content script should initialize
-- `REQUEST_PROVIDER_DATA` - Request provider configuration
-- `PROVIDER_DATA_READY` - Provider data available
-- `SHOW_PROVIDER_VERIFICATION_POPUP` - Display verification UI
-- `FILTERED_REQUEST_FOUND` - Matching network request found
-- `INTERCEPTED_REQUEST_AND_RESPONSE` - Network data captured
+- `CONTENT_SCRIPT_LOADED` - 通知 Content Script 已准备就绪
+- `SHOULD_INITIALIZE` - 检查 Content Script 是否应初始化
+- `REQUEST_PROVIDER_DATA` - 请求提供商配置
+- `PROVIDER_DATA_READY` - 提供商数据可用
+- `SHOW_PROVIDER_VERIFICATION_POPUP` - 显示验证 UI
+- `FILTERED_REQUEST_FOUND` - 找到匹配的网络请求
+- `INTERCEPTED_REQUEST_AND_RESPONSE` - 网络数据已捕获
 
-### Status Actions (Background Script → Content Script)
+### 状态操作 (后台脚本 → Content Script)
 
-- `CLAIM_CREATION_REQUESTED` - Claim creation started
-- `CLAIM_CREATION_SUCCESS/FAILED` - Claim creation result
-- `PROOF_GENERATION_STARTED` - Proof generation started
-- `PROOF_GENERATION_SUCCESS/FAILED` - Proof generation result
-- `PROOF_SUBMITTED` - Proof successfully submitted
-- `PROOF_SUBMISSION_FAILED` - Proof submission failed
+- `CLAIM_CREATION_REQUESTED` - 凭证创建已请求
+- `CLAIM_CREATION_SUCCESS/FAILED` - 凭证创建结果
+- `PROOF_GENERATION_STARTED` - 证明生成开始
+- `PROOF_GENERATION_SUCCESS/FAILED` - 证明生成结果
+- `PROOF_SUBMITTED` - 证明已成功提交
+- `PROOF_SUBMISSION_FAILED` - 证明提交失败
 
-## 🛠️ Customization Guide
+## 🛠️ 自定义指南
 
-### Modifying the Verification Popup
+### 修改验证弹窗
 
-The popup component in `components/ProviderVerificationPopup.js` can be customized:
+位于 `components/ProviderVerificationPopup.js` 的弹窗组件可以进行自定义：
 
-**Styling**: Modify the injected CSS in the `injectStyles()` function
-**Content**: Update the HTML structure in `renderInitialContent()`
-**Behavior**: Modify status handlers for different verification states
+**样式**: 修改 `injectStyles()` 函数中注入的 CSS
+**内容**: 更新 `renderInitialContent()` 中的 HTML 结构
+**行为**: 修改针对不同验证状态的状态处理程序
 
-**Key Customization Points:**
+**关键自定义点：**
 
 ```javascript
-// Popup positioning
+// 弹窗定位
 bottom: 20px;
 right: 20px;
 
-// Colors and theming
+// 颜色和主题
 background-color: #2C2C2E;
 color: #FFFFFF;
 
-// Animation timing
+// 动画时间
 transition: all 0.3s ease;
 ```
 
-### Provider Configuration
+### 提供商配置
 
-Provider data structure expected by the content script:
+Content Script 期望的提供商数据结构：
 
 ```javascript
 {
   providerId: "string",
-  name: "Provider Name",
-  description: "Provider Description",
+  name: "提供商名称",
+  description: "提供商描述",
   loginUrl: "https://provider.com/login",
   requestData: [
     {
@@ -182,65 +182,66 @@ Provider data structure expected by the content script:
 }
 ```
 
-### Network Filtering Logic
+### 网络过滤逻辑
 
-Modify `filterRequest()` function in `../utils/claim-creator` to customize request filtering logic:
+修改 `../utils/claim-creator` 中的 `filterRequest()` 函数以自定义请求过滤逻辑：
 
 ```javascript
-// Example custom filter
+// 自定义过滤器示例
 const customFilter = (request, criteria, parameters) => {
-  // Your custom filtering logic here
+  // 在此处编写您的自定义过滤逻辑
   return matchesCustomCriteria(request, criteria);
 };
 ```
 
-## 🔒 Security Considerations
+## 🔒 安全注意事项
 
-1. **Extension ID Validation**: Always validate the extension ID to prevent unauthorized access
-2. **Message Origin Validation**: Only accept messages from the same window/origin
-3. **Data Sanitization**: Sanitize all data received from web pages
-4. **Memory Management**: Clear sensitive data after use
-5. **Network Data Handling**: Handle intercepted network data securely
+1. **扩展 ID 验证**: 始终验证扩展 ID 以防止未经授权的访问
+2. **消息来源验证**: 仅接受来自同一窗口/源的消息
+3. **数据清理**: 清理从网页接收的所有数据
+4. **内存管理**: 使用后清除敏感数据
+5. **网络数据处理**: 安全地处理拦截的网络数据
 
-## 🐛 Debugging & Troubleshooting
+## 🐛 调试与故障排除
 
-### Common Issues
+### 常见问题
 
-1. **Content Script Not Loading**
-   - Check manifest.json configuration
-   - Verify content script is built and accessible
-   - Check console for injection errors
+1. **Content Script 未加载**
+   - 检查 manifest.json 配置
+   - 验证 content script 是否已构建且可访问
+   - 检查控制台是否有注入错误
 
-2. **Network Interception Not Working**
-   - Ensure interceptor script is web-accessible in manifest
-   - Check script injection timing (should be document_start)
-   - Verify network interceptor bundle exists
+2. **网络拦截不工作**
+   - 确保拦截器脚本在 manifest 中是 web-accessible 的
+   - 检查脚本注入时机（应为 document_start）
+   - 验证网络拦截器 bundle 是否存在
 
-3. **Popup Not Displaying**
-   - Check DOM readiness before injection
-   - Verify CSS styles are properly injected
-   - Check for CSS conflicts with host page
+3. **弹窗未显示**
+   - 在注入前检查 DOM 就绪状态
+   - 验证 CSS 样式是否正确注入
+   - 检查是否与宿主页面存在 CSS 冲突
 
-4. **SDK Communication Failing**
-   - Verify extension ID matches environment variable
-   - Check message format and action names
-   - Ensure proper response handling
+4. **SDK 通信失败**
+   - 验证扩展 ID 是否与环境变量匹配
+   - 检查消息格式和操作名称
+   - 确保正确的响应处理
 
-### Debug Logging
+### 调试日志
 
-Enable debug logging by setting up the logger service:
+通过设置日志服务启用调试日志：
 
 ```javascript
 import { debugLogger, DebugLogType } from "../utils/logger";
 
-debugLogger.log(DebugLogType.CONTENT, "Your debug message here");
+debugLogger.log(DebugLogType.CONTENT, "在这里输入您的调试信息");
 ```
 
-## 🔄 Extension Lifecycle
+## 🔄 扩展生命周期
 
-1. **Initialization**: Content script checks if it should initialize for current URL
-2. **Injection**: Network interceptor is injected if initialization is required
-3. **Configuration**: Provider data is requested from background script
-4. **Collection**: Network requests are intercepted and filtered
-5. **Verification**: Popup is displayed and manages verification flow
-6. **Cleanup**: Resources are cleaned up after completion or timeout
+1. **初始化**: Content Script 检查是否应针对当前 URL 进行初始化
+2. **注入**: 如果需要初始化，则注入网络拦截器
+3. **配置**: 从后台脚本请求提供商数据
+4. **收集**: 拦截并过滤网络请求
+5. **验证**: 显示弹窗并管理验证流程
+6. **清理**: 完成或超时后清理资源
+

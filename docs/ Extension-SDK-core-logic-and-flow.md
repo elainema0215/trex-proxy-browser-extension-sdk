@@ -20,7 +20,77 @@ SDK 用于在**网页**或**扩展自身 UI（popup/panel）**中触发 Reclaim 
 
 ---
 
-## 二、目录与入口
+## 二、整体架构图
+
+下图从运行环境与通信关系角度概括 SDK 的整体架构：**调用方**（Web 页或扩展 Popup）通过 **Content Script** 与 **Background** 协作，在 **Provider 登录页** 中注入 **拦截器** 抓请求，由 **Background** 协调 **Offscreen** 生成证明，并与 **Reclaim 后端** 同步状态。
+
+```mermaid
+flowchart TB
+    subgraph 调用方["调用方（Web 页 / Extension Popup）"]
+        A[ReclaimExtensionSDK<br/>ReclaimExtensionProofRequest]
+    end
+
+    subgraph 扩展_Content["扩展：Content Script (content.js)"]
+        B[ReclaimContentScript]
+        B1[验证弹窗 UI]
+    end
+
+    subgraph 扩展_Background["扩展：Background (Service Worker)"]
+        C[messageRouter]
+        D[sessionManager]
+        E[proofQueue]
+        F[processFilteredRequest<br/>+ claim-creator]
+    end
+
+    subgraph 扩展_Offscreen["扩展：Offscreen Document"]
+        G[OffscreenProofGenerator<br/>createClaimOnAttestor]
+    end
+
+    subgraph Provider页["Provider 登录页 (MAIN world)"]
+        H[页面 fetch / XHR]
+        I[network-interceptor]
+        J[injection-scripts<br/>window.Reclaim]
+    end
+
+    subgraph 外部服务["外部服务"]
+        K[Reclaim 后端 API]
+        L[attestor-core WASM]
+    end
+
+    A <-->|"extension: sendMessage\nweb: postMessage"| B
+    B <-->|chrome.runtime.sendMessage| C
+    C --> D
+    C --> F
+    D --> C
+    F --> E
+    E --> C
+    C <-->|sendMessage| G
+    G --> L
+    C --> K
+    D --> K
+
+    B -->|注入 script| I
+    B -->|注入 script| J
+    H --> I
+    I -->|postMessage\nINTERCEPTED_*| B
+    B -->|postMessage\nVERIFICATION_*| A
+    B -.-> B1
+```
+
+**图例说明：**
+
+| 层级 | 说明 |
+|------|------|
+| **调用方** | 使用 SDK 的 Web 页面或扩展 Popup/Options；通过 `init()` + `startVerification()` 发起，通过事件 `completed` / `error` 收结果。 |
+| **Content Script** | 注入到「当前 Tab」的扩展脚本；仅在验证 Tab（managedTab）内注入拦截器、拉 providerData、做请求过滤，并转发证明结果到页面。 |
+| **Background** | Service Worker；维护会话 ctx、路由消息、拉 Provider、开 Tab、处理过滤请求、组 Claim、排队生成证明、提交回调。 |
+| **Offscreen** | 不可见的扩展页面；负责私钥生成与 ZK 证明（createClaimOnAttestor），供 Background 通过 sendMessage 调用。 |
+| **Provider 页** | 用户登录的第三方页（如 Google/GitHub）；MAIN world 内运行 network-interceptor（劫持 fetch/XHR）和 injection-scripts（window.Reclaim）。 |
+| **外部服务** | Reclaim 后端（会话/状态/Provider 配置）、attestor-core（WASM 证明）。 |
+
+---
+
+## 三、目录与入口
 
 ```
 src/
@@ -31,9 +101,8 @@ src/
 │   ├── messageRouter.js        # 消息分发（START_VERIFICATION、FILTERED_REQUEST_FOUND 等）
 │   ├── sessionManager.js       # startVerification / failSession / submitProofs / cancelSession
 │   ├── proofQueue.js           # 证明生成队列（串行、暂停/恢复 SessionTimer）
-│   ├── tabManager.js            # managedTabs 简单封装
+│   ├── tabManager.js            # managedTabs 简单封装(暂时未使用)
 │   ├── cookieUtils.js          # 按 URL 获取 Cookie（eTLD+1、分区 Cookie）
-│   └── types.js
 ├── content/
 │   ├── content.js              # Content 主逻辑：注入拦截器、ReclaimContentScript、过滤与转发
 │   └── components/
@@ -63,7 +132,7 @@ src/
 
 ---
 
-## 三、核心模块职责
+## 四、核心模块职责
 
 | 模块                             | 职责                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -83,7 +152,7 @@ src/
 
 ---
 
-## 四、主流程：从“开始验证”到“证明回调”
+## 五、主流程：从“开始验证”到“证明回调”
 
 ### 4.1 会话初始化（Web/Extension 调用方）
 
@@ -191,14 +260,7 @@ src/
 
 ---
 
-## 五、取消与失败路径
-
-- **cancel()**（SDK）：postMessage CANCEL_VERIFICATION（或 extension 下 chrome.runtime.sendMessage）。Content 转发给 Background，**sessionManager.cancelSession**：aborted=true、updateSessionStatus(PROOF_GENERATION_FAILED)、向 activeTab/originalTab 发 PROOF_GENERATION_FAILED、runtime 广播、关 Tab、清队列与 activeSessionId。
-- **failSession**（超时、Claim 失败、证明失败、Tab 关闭等）：sessionTimerManager.clearAllTimers、aborted=true、updateSessionStatus(PROOF_GENERATION_FAILED)、通知 Content 与 originalTab（PROOF_GENERATION_FAILED）、runtime 广播、proofQueue 清空、activeSessionId=null。Content 再 postMessage VERIFICATION_FAILED，SDK 侧 \_emit("error", err)。
-
----
-
-## 六、消息与动作速查
+## 七、消息与动作速查
 
 | Action                                                                    | 方向                           | 说明                                                              |
 | ------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------- |
@@ -216,7 +278,213 @@ src/
 
 ---
 
-## 七、数据流简图
+## 八、核心逻辑流转图（Mermaid）
+
+### 8.1 架构与模块关系
+
+```mermaid
+flowchart TB
+    subgraph 调用方
+        Web[Web 页面]
+        Popup[Extension Popup/Options]
+    end
+
+    subgraph 扩展层
+        Content[Content Script<br/>content.js]
+        BG[Background<br/>background.js + messageRouter]
+        Offscreen[Offscreen Document<br/>offscreen.js]
+    end
+
+    subgraph Provider 页 MAIN world
+        Page[页面 fetch/XHR]
+        Interceptor[network-interceptor.js]
+        Injection[injection-scripts.js<br/>window.Reclaim]
+    end
+
+    subgraph 外部
+        Backend[Reclaim 后端 API]
+        Attestor[attestor-core WASM]
+    end
+
+    Web -->|postMessage START_VERIFICATION| Content
+    Popup -->|chrome.runtime.sendMessage| BG
+    Content <-->|chrome.runtime.sendMessage| BG
+    BG -->|chrome.runtime.sendMessage| Offscreen
+    BG -->|fetchProviderData / updateSessionStatus| Backend
+    Offscreen -->|createClaimOnAttestor| Attestor
+
+    Content -->|注入 script 标签| Interceptor
+    Content -->|注入 script 标签| Injection
+    Page -->|劫持请求/响应| Interceptor
+    Interceptor -->|postMessage INTERCEPTED_REQUEST_AND_RESPONSE| Content
+    Content -->|window.postMessage VERIFICATION_*| Web
+```
+
+### 8.2 主流程时序（从开始验证到证明回调）
+
+```mermaid
+sequenceDiagram
+    participant Caller as Web/Popup 调用方
+    participant SDK as ReclaimExtensionProofRequest
+    participant Content as Content Script
+    participant BG as Background
+    participant Session as sessionManager
+    participant Queue as proofQueue
+    participant Offscreen as Offscreen
+    participant Backend as 后端 API
+    participant Page as Provider 页面
+
+    Note over Caller,Backend: 1. 会话初始化（init）
+    Caller->>SDK: init(applicationId, appSecret, providerId)
+    SDK->>SDK: 签名 { providerId, timestamp }
+    SDK->>Backend: POST /api/sdk/init/session/
+    Backend-->>SDK: sessionId, resolvedProviderVersion
+
+    Note over Caller,Backend: 2. 启动验证（startVerification）
+    Caller->>SDK: request.startVerification()
+    SDK->>SDK: _enqueueVerification()
+    SDK->>Content: sendMessage START_VERIFICATION (或 postMessage)
+    Content->>BG: chrome.runtime.sendMessage START_VERIFICATION
+    BG->>BG: messageRouter.handleMessage
+    BG->>Session: startVerification(ctx, templateData)
+    Session->>Backend: fetchProviderData(providerId, sessionId)
+    Backend-->>Session: providerData (loginUrl, requestData, ...)
+    Session->>Page: chrome.tabs.create(loginUrl)
+    Session->>Session: initPopupMessage / providerDataMessage 按 tabId 缓存
+    Session->>Backend: updateSessionStatus(USER_STARTED_VERIFICATION)
+
+    Note over Caller,Backend: 3. Content 在 Provider Tab 内就绪
+    Page->>Content: 加载 → CONTENT_SCRIPT_LOADED
+    Content->>BG: CONTENT_SCRIPT_LOADED
+    BG->>Content: SHOULD_INITIALIZE + 补发 SHOW_POPUP / PROVIDER_DATA_READY
+    Content->>Content: 注入 network-interceptor + injection-scripts
+    Content->>Content: new ReclaimContentScript()
+    Content->>BG: CHECK_IF_MANAGED_TAB → REQUEST_PROVIDER_DATA
+    BG-->>Content: providerData, parameters, sessionId
+    Content->>Content: startNetworkFiltering(), setupUrlListener()
+
+    Note over Caller,Backend: 4. 网络拦截与过滤
+    Page->>Page: fetch/XHR 请求
+    Page->>Content: INTERCEPTED_REQUEST_AND_RESPONSE (postMessage)
+    Content->>Content: filterInterceptedRequests() 定时执行
+    Content->>Content: filterRequest() 与 requestData 匹配
+    Content->>BG: FILTERED_REQUEST_FOUND (request, criteria, sessionId)
+
+    Note over Caller,Backend: 5. Background 处理过滤请求 → Claim → 证明队列
+    BG->>BG: processFilteredRequest()
+    BG->>BG: cookieUtils.getCookiesForUrl()
+    BG->>Content: CLAIM_CREATION_REQUESTED
+    BG->>Offscreen: GET_PRIVATE_KEY (ensureOffscreenDocument)
+    Offscreen-->>BG: 私钥
+    BG->>BG: createClaimObject (params-extractor, 组装 claim)
+    BG->>Content: CLAIM_CREATION_SUCCESS
+    BG->>Queue: addToProofGenerationQueue(ctx, claimData, requestHash)
+
+    Note over Caller,Backend: 6. 证明生成（串行队列）
+    Queue->>Content: PROOF_GENERATION_STARTED
+    Queue->>BG: ctx.generateProof(claimData)
+    BG->>Offscreen: GENERATE_PROOF (claimData)
+    Offscreen->>Offscreen: createClaimOnAttestor(claimData)
+    Offscreen-->>BG: GENERATE_PROOF_RESPONSE (proof)
+    BG->>BG: generatedProofs.set(requestHash, proof)
+    Queue->>Content: PROOF_GENERATION_SUCCESS
+    Queue->>Queue: 队列空且模板齐 → submitProofs()
+
+    Note over Caller,Backend: 7. 证明提交与回调
+    Session->>Session: formatProof(), submitProofOnCallback() 或 updateSessionStatus
+    Session->>Content: PROOF_SUBMITTED (formattedProofs)
+    Session->>BG: chrome.runtime.sendMessage PROOF_SUBMITTED
+    Content->>Caller: window.postMessage VERIFICATION_COMPLETED (proofs)
+    SDK->>Caller: _emit('completed', proofs) → Promise resolve
+```
+
+### 8.3 消息与数据流简图
+
+```mermaid
+flowchart LR
+    subgraph 入口
+        A[init / startVerification]
+    end
+    subgraph Content
+        B[CONTENT_SCRIPT_LOADED]
+        C[REQUEST_PROVIDER_DATA]
+        D[SHOW_POPUP / PROVIDER_DATA_READY]
+        E[INTERCEPTED_REQUEST_AND_RESPONSE]
+        F[filterRequest]
+        G[FILTERED_REQUEST_FOUND]
+    end
+    subgraph Background
+        H[messageRouter]
+        I[sessionManager.startVerification]
+        J[processFilteredRequest]
+        K[createClaimObject]
+        L[proofQueue]
+        M[generateProof → Offscreen]
+        N[submitProofs]
+    end
+    subgraph 出口
+        O[PROOF_SUBMITTED]
+        P[VERIFICATION_COMPLETED]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+    L --> M
+    M --> N
+    N --> O
+    O --> P
+```
+
+### 8.4 失败与取消路径
+
+```mermaid
+flowchart TB
+    subgraph 触发
+        T1[用户关闭 Provider Tab]
+        T2[SessionTimer 超时]
+        T3[Claim 创建失败]
+        T4[证明生成失败]
+        T5[用户 cancel]
+    end
+    F[failSession / cancelSession]
+    subgraph 清理
+        C1[sessionTimerManager.clearAllTimers]
+        C2[ctx.aborted = true]
+        C3[updateSessionStatus PROOF_GENERATION_FAILED]
+        C4[proofQueue 清空]
+    end
+    subgraph 通知
+        N1[PROOF_GENERATION_FAILED → Content]
+        N2[Content → window.postMessage VERIFICATION_FAILED]
+        N3[SDK _emit 'error']
+    end
+
+    T1 --> F
+    T2 --> F
+    T3 --> F
+    T4 --> F
+    T5 --> F
+    F --> C1
+    F --> C2
+    F --> C3
+    F --> C4
+    F --> N1
+    N1 --> N2
+    N2 --> N3
+```
+
+---
+
+## 九、数据流简图（ASCII 备查）
 
 ```
 [Web / Popup]
@@ -249,7 +517,7 @@ src/
 
 ---
 
-## 八、依赖与外部服务
+## 十、依赖与外部服务
 
 - **后端**：`BACKEND_URL`（默认 https://api.reclaimprotocol.org）
   - `POST /api/sdk/init/session/` 初始化会话

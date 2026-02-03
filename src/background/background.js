@@ -1,7 +1,5 @@
-// Import polyfills
-import "../utils/polyfills";
 
-// Import necessary utilities and libraries
+import "../utils/polyfills";
 import {
   fetchProviderData,
   updateSessionStatus,
@@ -29,10 +27,23 @@ const bgLogger = createContextLogger({
   source: "reclaim-extension-sdk",
 });
 
+/**
+ * 扩展后台入口：初始化验证会话上下文并注册消息与 Tab 监听。
+ *
+ * 主要功能：
+ * - 安装 offscreen 就绪监听，供 proof 生成使用
+ * - 创建并返回 ctx：集中保存当前会话状态（sessionId、providerData、activeTabId、proof 队列等）及依赖（fetch、proof 生成、claim 创建、logger 等）
+ * - 从 chrome.storage.local 加载日志配置并监听变更以实时同步
+ * - 将 sessionManager 的 failSession、submitProofs 及本文件内的 processFilteredRequest 绑定到 ctx，供 messageRouter 等调用
+ * - 注册 chrome.runtime.onMessage，将所有消息交给 messageRouter.handleMessage（处理 START_VERIFICATION、CONTENT_SCRIPT_LOADED、请求过滤/claim/proof 等）
+ * - 注册 chrome.tabs.onRemoved：在验证会话进行中若当前 Tab 或所有托管 Tab 被关闭，则调用 failSession 并清理 ctx 中的 tab/会话引用
+ *
+ * 流程概览：扩展加载 →  background 调用 initBackground() → 得到 ctx，消息与 Tab 监听生效 → 收到 START_VERIFICATION 后由 messageRouter 驱动拉取 provider、开 Tab、过滤请求、创建 claim、排队生成 proof、提交/回调。
+ */
 export default function initBackground() {
   installOffscreenReadyListener();
 
-  // Context object to hold shared state and dependencies
+  // 用于保存共享状态和依赖关系的上下文对象
   const ctx = {
     // State
     activeTabId: null,
