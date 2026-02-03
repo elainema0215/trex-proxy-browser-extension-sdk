@@ -5,7 +5,12 @@ import { MESSAGE_ACTIONS, MESSAGE_SOURCES } from "../constants/index";
 import { ensureOffscreenDocument } from "../offscreen-manager";
 import { EVENT_TYPES, LOG_LEVEL, LOG_TYPES } from "../logger/constants";
 
-// Main function to generate proof using offscreen document
+/**
+ * 在 Background 中调用：确保 offscreen 文档就绪后，将 claimData 通过消息发给 offscreen，
+ * 由 offscreen 内的 createClaimOnAttestor 连 attestor 做证明生成。本函数等待 offscreen
+ * 回传 GENERATE_PROOF_RESPONSE（成功则 resolve(response)，失败则 resolve({ success: false, error })），
+ * 或 60 秒超时 / 发送失败时 reject。
+ */
 export const generateProof = async (claimData, bgLogger) => {
   const proofLogger = bgLogger;
 
@@ -24,10 +29,10 @@ export const generateProof = async (claimData, bgLogger) => {
       });
       throw new Error("No claim data provided for proof generation");
     }
-    // Ensure the offscreen document exists and is ready
+    // 确保 offscreen 文档已创建并处于可接收消息状态
     await ensureOffscreenDocument(proofLogger);
 
-    // Generate the proof using the offscreen document
+    // 注册一次性的 GENERATE_PROOF_RESPONSE 监听，向 offscreen 发送 GENERATE_PROOF + claimData，超时或发送失败则 reject
     return new Promise((resolve, reject) => {
       const messageTimeout = setTimeout(() => {
         proofLogger.error({
@@ -98,10 +103,9 @@ export const generateProof = async (claimData, bgLogger) => {
         }
       };
 
-      // Add listener for response
       chrome.runtime.onMessage.addListener(messageListener);
 
-      // Send message to offscreen document to generate proof
+      // 把 claimData 发给 offscreen；offscreen 内会调用 createClaimOnAttestor(claimData) 连 attestor 生成 proof，再回传 GENERATE_PROOF_RESPONSE
       chrome.runtime.sendMessage(
         {
           action: MESSAGE_ACTIONS.GENERATE_PROOF,

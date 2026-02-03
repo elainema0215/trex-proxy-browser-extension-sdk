@@ -4,12 +4,14 @@ import initBackground from "./background/background";
 import { BACKEND_URL, API_ENDPOINTS, RECLAIM_SDK_ACTIONS } from "./utils/constants";
 import { loggerService } from "./utils/logger/LoggerService";
 
-// Global verification queue to serialize extension sessions (background is single-session)
+// 用于序列化扩展会话的全局验证队列（后台为单会话） (background is single-session)
+
 const _verificationQueue = [];
 let _queueRunning = false;
 // eslint-disable-next-line no-undef
 const SDK_VERSION = __SDK_VERSION__;
 
+// 将验证任务添加到队列并触发队列处理
 function _enqueueVerification(task) {
   return new Promise((resolve, reject) => {
     _verificationQueue.push({ task, resolve, reject });
@@ -17,6 +19,7 @@ function _enqueueVerification(task) {
   });
 }
 
+// 处理队列中的下一个验证任务
 async function _drainQueue() {
   if (_queueRunning) return;
   const next = _verificationQueue.shift();
@@ -33,6 +36,7 @@ async function _drainQueue() {
   }
 }
 
+// ReclaimExtensionProofRequest 类
 /**
  * 单次验证请求实例：负责会话配置、事件监听、与 Content/Background 的通信桥接。
  * 运行环境分为 extension（扩展 popup/options 页）与 web（第三方网页），通信方式不同。
@@ -127,6 +131,7 @@ class ReclaimExtensionProofRequest {
     });
     instance.sessionId = initRes.sessionId || "";
     instance.resolvedProviderVersion = initRes.resolvedProviderVersion || "";
+    console.log("调用后端 /api/sdk/init/session/ 拿到的结果是 :", initRes);
     return instance;
   }
 
@@ -193,6 +198,7 @@ class ReclaimExtensionProofRequest {
   getStatusUrl() {
     if (!this.sessionId) throw new Error("Session not initialized");
 
+    console.log("getStatusUrl is :", API_ENDPOINTS.STATUS_URL(this.sessionId));
     return API_ENDPOINTS.STATUS_URL(this.sessionId);
   }
 
@@ -292,7 +298,8 @@ class ReclaimExtensionProofRequest {
         offCompleted && offCompleted();
         offError && offError();
       };
-
+      console.log("templateData is :", templateData);
+      console.log("_mode is :", this._mode);
       if (this._mode === "extension") {
         try {
           chrome.runtime.sendMessage(
@@ -391,6 +398,7 @@ class ReclaimExtensionProofRequest {
   }
 }
 
+//  对外 SDK 单例
 class ReclaimExtensionSDK {
   constructor() {
     this._backgroundInitialized = false;
@@ -414,7 +422,7 @@ class ReclaimExtensionSDK {
     }
   }
 
-  // Check if extension is installed and matches extensionID
+  // 检查扩展程序是否已安装且与扩展ID匹配
   isExtensionInstalled({ extensionID, timeout = 500 } = {}) {
     return new Promise((resolve) => {
       const messageId = `reclaim-check-${Date.now()}`;
@@ -444,7 +452,7 @@ class ReclaimExtensionSDK {
     return SDK_VERSION;
   }
 
-  // Primary API: create a per-request instance
+  // 主要API：为每个请求创建一个实例
   async init(applicationId, appSecret, providerId, options = {}) {
     return await ReclaimExtensionProofRequest.init(applicationId, appSecret, providerId, options);
   }
@@ -453,10 +461,14 @@ class ReclaimExtensionSDK {
     return ReclaimExtensionProofRequest.fromJsonString(json, options);
   }
 
+  /**
+   * 设置日志配置并持久化存储
+   * 扩展环境下直接存储到 chrome.storage，网页环境下通过 postMessage 委托给 content script
+   */
   setLogConfig(config, extensionID) {
     loggerService.setConfig(config);
 
-    // In extension contexts, persist to storage (propagates to all contexts)
+    // 在扩展上下文中，持久化到存储（传播到所有上下文）
     try {
       if (this._mode === "extension" && typeof chrome !== "undefined" && chrome.storage?.local) {
         const { LOG_CONFIG_STORAGE_KEY } = require("./utils/logger/constants");
@@ -467,7 +479,7 @@ class ReclaimExtensionSDK {
       }
     } catch {}
 
-    // In web page context, ask the content script to persist it
+    // 在网页上下文中，要求内容脚本持久化它
     window.postMessage(
       {
         action: RECLAIM_SDK_ACTIONS.SET_LOG_CONFIG,

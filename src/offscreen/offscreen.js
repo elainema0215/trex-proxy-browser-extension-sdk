@@ -100,6 +100,7 @@ class OffscreenProofGenerator {
         break;
 
       case MESSAGE_ACTIONS.GENERATE_PROOF:
+        // message.data 即 Background 发来的 claimData（name, params, secretParams, ownerPrivateKey, client 等），用于 createClaimOnAttestor
         (async () => {
           try {
             offscreenLogger.info({
@@ -210,6 +211,9 @@ class OffscreenProofGenerator {
     return true;
   }
 
+  /**
+   * 在 offscreen 内执行证明生成：用 claimData 调用 createClaimOnAttestor，与 attestor 通信完成 TLS 隧道、请求/响应与 ZK 证明，返回 attestor 签名的结果。与 2 分钟超时做 race。
+   */
   async generateProof(claimData, offscreenLogger) {
     if (!claimData) {
       throw new Error("No claim data provided for proof generation");
@@ -236,8 +240,8 @@ class OffscreenProofGenerator {
           reject(new Error("Proof generation timed out after 2 minutes"));
         }, 60000 * 2);
       });
-      // 通过 createClaimOnAttestor(claimData) 连到 attestor 的 WebSocket 服务（/ws），完成「建 tunnel → TLS → claim tunnel → 拿到签名 proof」这一套协议。
-      const attestorPromise = await createClaimOnAttestor(claimData);
+      // 调用 attestor-core：连接 attestor 的 WebSocket (client.url，通常为 /ws)，由 attestor 与目标站点（params.url 的 host）建立 TLS，代发 HTTP 请求并收响应，在 attestor 侧做 ZK 证明后返回签名的 proof。不在此处 await，以便与 timeoutPromise 做 Promise.race。
+      const attestorPromise = createClaimOnAttestor(claimData);
 
       offscreenLogger.info({
         message: "[OFFSCREEN] Attestor promise created",

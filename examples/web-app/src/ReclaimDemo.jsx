@@ -234,11 +234,13 @@ export default function ReclaimDemo() {
       setLoading(true);
       setError('');
       setProofs(null);
+      // 调用reclaimExtensionSDK，初始化验证请求
       const request = await reclaimExtensionSDK.init(APP_ID, APP_SECRET, providerId, {
         extensionID: EXTENSION_ID,
         // callbackUrl: 'https://your.server/receive-proofs' // optional
       });
-      console.log(request, "request");
+      console.log("request is",request);
+      // 调用reclaimExtensionSDK，设置日志配置
       reclaimExtensionSDK.setLogConfig({
         logLevel: "ALL",
         consoleEnabled: true,
