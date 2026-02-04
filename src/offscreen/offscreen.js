@@ -1,3 +1,22 @@
+/**
+ * Offscreen Document 入口（Manifest V3 下扩展内唯一 offscreen 文档）
+ *
+ * 主要功能：
+ * - 在独立的 offscreen 文档上下文中执行 ZK 证明生成，规避 Service Worker 无 DOM、无法稳定使用 WebAssembly / WebSocket 的限制。
+ * - 通过 chrome.runtime.onMessage 接收 Background 下发的指令，根据 MESSAGE_ACTIONS 分发处理，并通过 sendMessage 回传结果。
+ *
+ * 主要逻辑：
+ * 1. 初始化：注入 COOP/COEP meta 以支持 SharedArrayBuffer；设置 WASM_PATH；将自定义 WebSocket 挂到 window，供 attestor 通信使用。
+ * 2. 就绪后向 Background 发送 OFFSCREEN_DOCUMENT_READY，供 offscreen-manager 同步状态。
+ * 3. 消息处理：
+ *    - PING_OFFSCREEN：回复就绪信号。
+ *    - GENERATE_PROOF：接收 claimData，调用 createClaimOnAttestor 与 attestor 建连、完成 TLS 隧道与证明生成，与 2 分钟超时做 Promise.race；成功后通过 GENERATE_PROOF_RESPONSE 回传 proof，失败回传 error；期间通过 updateSessionStatus 更新会话状态。
+ *    - GET_PRIVATE_KEY：在 offscreen 内生成随机私钥并回传。
+ * 4. 日志：使用 createContextLogger，并从 chrome.storage.local 的 LOG_CONFIG_STORAGE_KEY 拉取并实时同步日志配置。
+ *
+ * @file
+ */
+
 // Import necessary utilities and interfaces
 import "../utils/polyfills";
 import { MESSAGE_ACTIONS, MESSAGE_SOURCES, RECLAIM_SESSION_STATUS } from "../utils/constants";
